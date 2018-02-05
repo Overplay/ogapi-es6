@@ -38,5 +38,18 @@ import ogAPI from './services/ogapi'
     ogapiModule.directive( 'ogHud', ogHUDDirective );
     ogapiModule.service('ogAPI', ogAPI);
 
+    /**
+     * Filter that converts raw seconds into something like "09:23"
+     */
+    ogapiModule.filter('minsec', function(){
+        return function(seconds){
+            const min = Math.floor(seconds/60);
+            const sec = seconds - min*60;
+            const minPadded = ("0" + min).slice( -2 );
+            const secPadded = ("0" + sec).slice( -2 );
+            return minPadded + ':' + secPadded;
+        }
+    })
+
 
 })( window, window.angular );

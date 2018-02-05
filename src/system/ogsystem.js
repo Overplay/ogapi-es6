@@ -36,8 +36,10 @@ export function getOGSystem() {
 
     let dudid = 'testy-mctesterson';
 
+    // Pulls this from the URL params `&deviceUDID=`
     const qParamUDID = getParameterByName( "deviceUDID" );
 
+    // Pulls this from the URL params `&jwt=`
     const jwt = getParameterByName( "jwt" );
 
     if ( qParamUDID )

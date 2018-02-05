@@ -1,10 +1,14 @@
 .ogappheader {
   display: table;
   font-family: POPBLACK, Arial, Courier;
-  font-size: 2em;
+  font-size: 3vh;
   font-weight: bold;
-  height: 60px;
-  margin: 0 0 10px 0;
+  //height: 10vh;
+  margin: 0 0 1vw 0;
+}
+
+.ogappheader-2line {
+  font-size: 2vh;
 }
 
 .ogappheadertext {

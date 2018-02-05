@@ -14,6 +14,10 @@
 
 import * as OGSystem from '../system/ogsystem'
 import Promise from 'bluebird'
+import _ from 'lodash'
+
+const uuidv4 = require( 'uuid/v4' );
+
 
 /**
  * Returns object.data | Helper with chaining Angular $http
@@ -30,10 +34,12 @@ let _appName;
 // The above is called appId everywhere else, so we support both in here until we can clean up!
 let _appId;
 let _appType;
+let _sessionUUID;
 
 let _deviceUDID;
 let _jwt;
 let _venueUUID;
+let _userUUID;
 
 let _userPermissions;
 let _user;
@@ -62,6 +68,7 @@ export default class ogAPI {
         this.$http = $http;
         this.$log = $log;
         this.$interval = $interval;
+        _sessionUUID
         this.$rootScope = $rootScope;
 
         const ogsystem = OGSystem.getOGSystem();
@@ -124,13 +131,44 @@ export default class ogAPI {
 
     }
 
+
     getUserForJwt() {
 
         if ( !_jwt ) {
             return Promise.resolve( {
                 firstName:   'Petro',
                 lastName:    'McPatron',
-                mobilePhone: '408-555-1212'
+                mobilePhone: '408-555-1212',
+                uuid:        '000i-00am-fake-uuid'
+            } )
+        }
+
+        if ( _jwt === 'oooo' ) {
+            this.$log.debug( 'Faux owner jwt for testing' );
+            return Promise.resolve( {
+                firstName:   'Ownie',
+                lastName:    'McOwner',
+                mobilePhone: '408-555-1212',
+                uuid:        '000i-00am-fake-uuid-owner'
+            } );
+        }
+
+        if ( _jwt === 'mmmm' ) {
+            this.$log.debug( 'Faux manager jwt for testing' );
+            return Promise.resolve( {
+                firstName:   'Marge',
+                lastName:    'McManager',
+                mobilePhone: '408-555-1212',
+                uuid:        '000i-00am-fake-uuid-mgr'
+            } );
+        }
+
+        if ( _jwt.startsWith('fake')){
+            return Promise.resolve( {
+                firstName:   'Fake',
+                lastName:    'User',
+                mobilePhone: '408-555-1212',
+                uuid:        '000i-00am-fake-uuid-'+_.random(1000,9999)
             } )
         }
 
@@ -139,10 +177,18 @@ export default class ogAPI {
 
     }
 
+    // TODO opening for brute force attack?
+    getUserForUuid( uuid ) {
+
+        return this.$http.get( '/user/findbyuuid&uuid=' + uuid )
+            .then( stripData );
+
+    }
+
     checkForFauxJwt() {
 
-        if ( !_jwt ) {
-            this.$log.debug( "No jwt, no permissions" );
+        if ( !_jwt || _jwt==='fake' ) {
+            this.$log.debug( "No or fake jwt, no permissions" );
             return Promise.resolve( { manager: false, owner: false, anymanager: false } );
         }
 
@@ -179,22 +225,21 @@ export default class ogAPI {
      */
     checkUserLevel() {
 
-        const permissions = this.checkForFauxJwt();
-        if ( permissions !== null ) return permissions;
-
-        // TODO
         return this.getUserForJwt()
             .then( ( user ) => {
                 _user = user;
             } )
-            .then( this.getUsersPermissionsForThisDevice )
+            .then( this.getUsersPermissionsForThisDevice.bind(this) )
             .then( ( permissions ) => {
                 _userPermissions = permissions;
-                return permissions;
+                return { user: _user, permissions: _userPermissions };
             } )
             .catch( ( err ) => {
                 this.$log.error( "Problem checking permissions. " + err.message );
-                return Promise.resolve( { manager: false, owner: false, anymanager: false } ); // swallow for now
+                return Promise.resolve( { user: null,
+                                            permissions: { manager: false,
+                                                owner: false,
+                                                anymanager: false }} ); // swallow for now
             } );
     }
 
@@ -211,7 +256,7 @@ export default class ogAPI {
     }
 
     // static synonym
-    static updateDeviceModel( newData ){
+    static updateDeviceModel( newData ) {
         _deviceModel = newData;
         if ( _deviceDataCb ) _deviceDataCb( _deviceModel );
         return _deviceModel;
@@ -252,10 +297,10 @@ export default class ogAPI {
 
         const roomId = _appId + ':' + _deviceUDID;
 
-        io.socket.on( roomId, ( data ) =>  {
+        io.socket.on( roomId, ( data ) => {
 
             if ( _appMsgCb ) {
-                this.$rootScope.$apply(  () => {
+                this.$rootScope.$apply( () => {
                     _appMsgCb( data );
                 } );
             } else {
@@ -265,11 +310,11 @@ export default class ogAPI {
         } );
 
 
-        return new Promise( ( resolve, reject )=> {
+        return new Promise( ( resolve, reject ) => {
 
             io.socket.post( '/socket/join', {
                 room: roomId
-            },  ( resData, jwres ) => {
+            }, ( resData, jwres ) => {
                 this.$log.debug( resData );
                 if ( jwres.statusCode !== 200 ) {
                     reject( jwres );
@@ -301,7 +346,7 @@ export default class ogAPI {
 
             io.socket.post( '/ogdevice/subSystemMessages', {
                 deviceUDID: _deviceUDID
-            },  ( resData, jwres ) => {
+            }, ( resData, jwres ) => {
                 this.$log.debug( resData );
                 if ( jwres.statusCode !== 200 ) {
                     reject( jwres );
@@ -394,8 +439,10 @@ export default class ogAPI {
      * @returns
      */
 
-    init( { appType, appName, appId, deviceModelCallback, venueModelCallback,
-            appMsgCallback, sysMsgCallback, venueMsgCallback } ) {
+    init( {
+              appType, appName, appId, deviceModelCallback, venueModelCallback,
+              appMsgCallback, sysMsgCallback, venueMsgCallback
+          } ) {
 
         // Check the app type
         if ( !appType ) {
@@ -419,6 +466,15 @@ export default class ogAPI {
 
         _appName = appId || appName;
         _appId = _appName;
+
+        this.sessionUUIDKey = 'sessionUUID:' + _appId;
+        _sessionUUID = window.localStorage.getItem( this.sessionUUIDKey );
+
+        if ( !_sessionUUID ) {
+            console.log( 'There is no session UUID for this app, creating...' );
+            _sessionUUID = uuidv4();
+            window.localStorage.setItem( this.sessionUUIDKey, _sessionUUID );
+        }
 
         this.$log.debug( "Init for app: " + _appId );
 
@@ -448,7 +504,7 @@ export default class ogAPI {
 
         return this.$http.post( '/appmodel/initialize', { appid: _appId, deviceUDID: _deviceUDID } )
             .then( stripData )
-            .then(  ( model ) => {
+            .then( ( model ) => {
                 this.$log.debug( "ogAPI: Model data init complete" );
                 this.$log.debug( "ogAPI: Subscribing to model changes" );
                 return this.subscribeToAppData();
@@ -462,21 +518,21 @@ export default class ogAPI {
 
                 if ( _appMsgCb ) p.push( this.joinDeviceAppRoom() );
                 if ( _sysMsgCb ) p.push( this.joinSystemMsgRoom() );
-                if (_venueMsgCb ) p.push( this.joinVenueMsgRoom());
+                if ( _venueMsgCb ) p.push( this.joinVenueMsgRoom() );
 
                 return Promise.all( p );
             } )
             .then( () => {
                 this.$log.debug( "Checking user level for this device" );
-                if ( _appType === 'mobile' ) {
+                if ( _appType === 'mobile' || _appType === 'control' ) {
                     return this.checkUserLevel();
                 } else {
-                    return "TV APP";
+                    return null;
                 }
             } )
             .then( ( userLevel ) => {
                 this.$log.debug( "User level: " + userLevel );
-                return { device: _deviceModel, venue: _venueModel };
+                return { device: _deviceModel, venue: _venueModel, user: userLevel };
             } );
     }
 
@@ -490,7 +546,7 @@ export default class ogAPI {
     sendSIOMessage( url, message ) {
         const wrappedMessage = { deviceUDID: _deviceUDID, message: message };
         return new Promise( ( resolve, reject ) => {
-            io.socket.post( url, wrappedMessage, ( resData, jwRes )=> {
+            io.socket.post( url, wrappedMessage, ( resData, jwRes ) => {
                 if ( jwRes.statusCode !== 200 ) {
                     reject( jwRes );
                 } else {
@@ -527,7 +583,7 @@ export default class ogAPI {
      * @param {String} message
      * @returns
      */
-    sendMessageToDeviceRoom ( message ) {
+    sendMessageToDeviceRoom( message ) {
         // NOTE must have leading slash!
         return this.sendSIOMessage( '/ogdevice/message', message );
     }
@@ -540,13 +596,13 @@ export default class ogAPI {
      * @param {Object} message
      * @returns
      */
-    sendMessageToVenueRoom ( message ) {
+    sendMessageToVenueRoom( message ) {
         // NOTE must have leading slash!
 
         return new Promise( ( resolve, reject ) => {
-            io.socket.post( '/venue/message', { venueUUID: _venueUUID, message: message}, ( resData, jwRes ) => {
+            io.socket.post( '/venue/message', { venueUUID: _venueUUID, message: message }, ( resData, jwRes ) => {
                 if ( jwRes.statusCode !== 200 ) {
-                    reject( new Error('Bad return status code: '+ jwRes );
+                    reject( new Error( 'Bad return status code: ' + jwRes ) );
                 } else {
                     resolve( { resData: resData, jwRes: jwRes } );
                 }
@@ -555,7 +611,7 @@ export default class ogAPI {
         } );
     };
 
-    sendMessageToAppRoom ( message, includeMe ) {
+    sendMessageToAppRoom( message, includeMe ) {
         const room = _appId + ':' + _deviceUDID;
         return this.sioPut( '/socket/send', { room: room, message: message, echo: includeMe } );
     };
@@ -601,8 +657,10 @@ export default class ogAPI {
      *
      * @returns {Promise<Object>} Data from socialscrape result
      */
-    getTweets() {
-        return this.$http.get( '/socialscrape/result?deviceUDID=' + _deviceUDID + '&appId=' + _appId )
+    getTweets( venueWide ) {
+        var ep = '/socialscrape/result?deviceUDID=' + _deviceUDID + '&appId=' + _appId;
+        if ( venueWide ) ep = ep + '&venueWide=true';
+        return $http.get( ep )
             .then( stripData );
     };
 
@@ -623,12 +681,13 @@ export default class ogAPI {
      * @param {any} paramsArr
      * @returns {Promise} promiseResolveReject
      */
-    updateTwitterQuery( paramsArr ) {
+    updateTwitterQuery( paramsArr, venueWide ) {
         var query = paramsArr.join( '+OR+' );
-        return this.$http.post( '/socialscrape/add', {
+        return $http.post( '/socialscrape/add', {
             queryString: query,
             deviceUDID:  _deviceUDID,
-            appId:       _appId
+            appId:       _appId,
+            venueWide:   venueWide
         } );
     };
 
@@ -645,7 +704,7 @@ export default class ogAPI {
     saveHTTP() {
         return this.$http.put( '/appmodel/' + _appId + '/' + _deviceUDID, { data: service.model } )
             .then( stripData )
-            .then(  ( data ) => {
+            .then( ( data ) => {
                 this.$log.debug( "ogAPI: Model data saved via PUT" );
                 //updateModel( data[0] )
             } );
@@ -710,7 +769,7 @@ export default class ogAPI {
         return _deviceModel;
     }
 
-    set deviceModel(newValue) {
+    set deviceModel( newValue ) {
         _deviceModel = newValue;
     }
 
@@ -728,7 +787,7 @@ export default class ogAPI {
      *
      * @returns {Promise} HttpPromise
      */
-    loadModelAndLock () {
+    loadModelAndLock() {
         return this.getDataForAppAndLock()
             .then( ( model ) => {
                 if ( !model.hasOwnProperty( 'lockKey' ) )
@@ -802,7 +861,7 @@ export default class ogAPI {
                 this.$rootScope.$broadcast( '$app_state_change', { action: 'kill', appId: appid } );
                 return d;
             } )
-            .catch(( err ) => {
+            .catch( ( err ) => {
                 this.$log.info( "App kill FAILED for: " + appid );
                 this.$rootScope.$broadcast( '$app_state_change_failure', { action: 'kill', appId: appid } );
                 throw err; // Rethrow
@@ -860,7 +919,7 @@ export default class ogAPI {
             .then( stripData );
     }
 
-    getOGSystem(){
+    getOGSystem() {
         return OGSystem.getOGSystem();
     }
 
@@ -911,6 +970,20 @@ export default class ogAPI {
             .then( stripData );
     };
 
+    //TODO how does the one above differ from this? MAK added this for SBLII 2/2018
+    /**
+     * Gets the grid for a device
+     * Does an http call to listingsforchannel and strips the data
+     *
+     * @returns {Object} channel listings for current channel on server
+     */
+    getGridForDevice = function () {
+
+        return $http.get( '/pgs/listingsforchannel2?deviceUDID=' + _deviceUDID )
+            .then( stripData );
+
+    };
+
     /**
      * Changes the channel by making a post to /ogdevice/changechannel
      *
@@ -954,6 +1027,8 @@ export default class ogAPI {
 
     };
 
+
+
     // TODO: WTF Is the method below?
     /**
      * Checks if a device is paired by querying getOGSystem
@@ -994,6 +1069,15 @@ export default class ogAPI {
         return this.$http.get( '/proxy/get?url=' + url )
             .then( stripData );
     };
+
+
+    /**
+     * Returns the unique ID for this session with this app. Use for making requests over Websockets.
+     * @returns {*}
+     */
+    getSessionUUID() {
+        return _sessionUUID;
+    }
 
 
 }
